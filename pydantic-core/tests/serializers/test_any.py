@@ -22,6 +22,7 @@ from pydantic_core import (
     SchemaValidator,
     core_schema,
     to_json,
+    to_jsonable_python,
 )
 
 from ..conftest import plain_repr
@@ -773,3 +774,180 @@ def test_ipaddress_type_inference(any_serializer, value, expected_json):
     assert any_serializer.to_python(value) == value
     assert any_serializer.to_python(value, mode='json') == expected_json
     assert any_serializer.to_json(value) == f'"{expected_json}"'.encode()
+
+
+# --- temporal_mode callable tests ---
+
+
+@pytest.mark.parametrize(
+    'value,callback,expected_json',
+    [
+        # datetime: custom ISO with callback
+        (
+            datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            lambda v: v.isoformat(),
+            b'"2024-01-01T12:00:00+00:00"',
+        ),
+        # datetime: naive, callback returns epoch int
+        (
+            datetime(2024, 1, 1, 0, 0, 0),
+            lambda v: 1704067200,
+            b'1704067200',
+        ),
+        # date: custom format
+        (
+            date(2024, 1, 15),
+            lambda v: v.strftime('%m/%d/%Y'),
+            b'"01/15/2024"',
+        ),
+        # time: custom format
+        (
+            time(14, 30, 0),
+            lambda v: v.strftime('%I:%M %p'),
+            b'"02:30 PM"',
+        ),
+        # timedelta: total seconds as float
+        (
+            timedelta(hours=2, minutes=30),
+            lambda v: v.total_seconds(),
+            b'9000.0',
+        ),
+        # timedelta: human-readable string
+        (
+            timedelta(hours=1, minutes=5, seconds=3),
+            lambda v: f'{int(v.total_seconds() // 3600)}h {int(v.total_seconds() % 3600 // 60)}m',
+            b'"1h 5m"',
+        ),
+        # datetime: callback returns a dict
+        (
+            datetime(2024, 6, 15, 8, 30),
+            lambda v: {'year': v.year, 'month': v.month, 'day': v.day},
+            b'{"year":2024,"month":6,"day":15}',
+        ),
+    ],
+)
+def test_temporal_mode_callable_to_json(value, callback, expected_json):
+    assert to_json(value, temporal_mode=callback) == expected_json
+
+
+@pytest.mark.parametrize(
+    'value,callback,expected',
+    [
+        (
+            datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            lambda v: v.isoformat(),
+            '2024-01-01T12:00:00+00:00',
+        ),
+        (
+            date(2024, 1, 15),
+            lambda v: v.strftime('%m/%d/%Y'),
+            '01/15/2024',
+        ),
+        (
+            time(14, 30, 0),
+            lambda v: v.strftime('%I:%M %p'),
+            '02:30 PM',
+        ),
+        (
+            timedelta(hours=2, minutes=30),
+            lambda v: v.total_seconds(),
+            9000.0,
+        ),
+    ],
+)
+def test_temporal_mode_callable_to_jsonable_python(value, callback, expected):
+    assert to_jsonable_python(value, temporal_mode=callback) == expected
+
+
+@pytest.mark.parametrize(
+    'mode',
+    ['iso8601', 'seconds', 'milliseconds'],
+)
+def test_temporal_mode_string_literals_still_work(mode):
+    """Existing string literal values continue to work after the callable change."""
+    dt = datetime(2024, 1, 1, 0, 0, 0)
+    result_json = to_json(dt, temporal_mode=mode)
+    assert isinstance(result_json, bytes)
+    assert len(result_json) > 0
+    result_py = to_jsonable_python(dt, temporal_mode=mode)
+    assert result_py is not None
+
+
+@pytest.mark.parametrize(
+    'value,expected_json',
+    [
+        (datetime(2024, 1, 1, 0, 0, 0), b'"2024-01-01T00:00:00"'),
+        (date(2024, 1, 15), b'"2024-01-15"'),
+        (time(14, 30, 0), b'"14:30:00"'),
+        (timedelta(hours=2), b'"PT2H"'),
+    ],
+)
+def test_temporal_mode_callable_none_fallthrough_to_json(value, expected_json):
+    """Returning None from the callback falls through to the default iso8601 serialization."""
+    assert to_json(value, temporal_mode=lambda v: None) == expected_json
+
+
+@pytest.mark.parametrize(
+    'value,expected',
+    [
+        (datetime(2024, 1, 1, 0, 0, 0), '2024-01-01T00:00:00'),
+        (date(2024, 1, 15), '2024-01-15'),
+        (time(14, 30, 0), '14:30:00'),
+        (timedelta(hours=2), 'PT2H'),
+    ],
+)
+def test_temporal_mode_callable_none_fallthrough_to_jsonable_python(value, expected):
+    """Returning None from the callback falls through to the default iso8601 serialization."""
+    assert to_jsonable_python(value, temporal_mode=lambda v: None) == expected
+
+
+def test_temporal_mode_callable_selective_handling():
+    """Callback that only handles datetime, returns None for everything else."""
+    from datetime import datetime as dt_type
+
+    def datetime_only(v):
+        if isinstance(v, dt_type):
+            return v.strftime('%Y%m%d')
+        return None
+
+    # datetime: callback takes over
+    assert to_json(datetime(2024, 6, 15, 8, 30), temporal_mode=datetime_only) == b'"20240615"'
+    # date: callback returns None, falls through to iso8601
+    assert to_json(date(2024, 6, 15), temporal_mode=datetime_only) == b'"2024-06-15"'
+    # time: callback returns None, falls through to iso8601
+    assert to_json(time(14, 30), temporal_mode=datetime_only) == b'"14:30:00"'
+    # timedelta: callback returns None, falls through to iso8601
+    assert to_json(timedelta(hours=2), temporal_mode=datetime_only) == b'"PT2H"'
+
+
+def test_temporal_mode_callable_exception_propagates():
+    """If the callback raises, the error should propagate."""
+
+    def bad_callback(v):
+        raise ValueError('custom error from callback')
+
+    with pytest.raises(ValueError, match='custom error from callback'):
+        to_json(datetime(2024, 1, 1), temporal_mode=bad_callback)
+
+    with pytest.raises(ValueError, match='custom error from callback'):
+        to_jsonable_python(datetime(2024, 1, 1), temporal_mode=bad_callback)
+
+
+def test_temporal_mode_callable_dict_key():
+    """Callable temporal_mode works when a temporal value is used as a dict key."""
+    data = {datetime(2024, 1, 1, 12, 0, 0): 'value'}
+    result = to_json(data, temporal_mode=lambda v: v.strftime('%Y-%m-%d'))
+    assert result == b'{"2024-01-01":"value"}'
+
+
+def test_temporal_mode_callable_dict_key_none_fallthrough():
+    """Returning None from callback in dict-key context falls through to default."""
+    data = {datetime(2024, 1, 1, 0, 0, 0): 'value'}
+    result = to_json(data, temporal_mode=lambda v: None)
+    assert result == b'{"2024-01-01T00:00:00":"value"}'
+
+
+def test_temporal_mode_invalid_type():
+    """Passing an invalid type (not a string or callable) raises TypeError."""
+    with pytest.raises(TypeError):
+        to_json(datetime(2024, 1, 1), temporal_mode=42)

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple, PyType};
-use pyo3::{PyTraverseError, PyVisit};
+use pyo3::{PyTraverseError, PyVisit, intern};
 use type_serializers::any::AnySerializer;
 
 use crate::definitions::{Definitions, DefinitionsBuilder};
@@ -126,7 +126,7 @@ impl SchemaSerializer {
             polymorphic_serialization,
             context,
         );
-        let mut state = SerializationState::new(self.config, warnings_mode, include, exclude, extra)?;
+        let mut state = SerializationState::new(self.config.clone(), warnings_mode, include, exclude, extra)?;
         let v = self.serializer.to_python(value, &mut state)?;
         state.warnings.final_check(py)?;
         Ok(v)
@@ -176,7 +176,7 @@ impl SchemaSerializer {
             polymorphic_serialization,
             context,
         );
-        let mut state = SerializationState::new(self.config, warnings_mode, include, exclude, extra)?;
+        let mut state = SerializationState::new(self.config.clone(), warnings_mode, include, exclude, extra)?;
         let bytes = to_json_bytes(
             value,
             &self.serializer,
@@ -214,30 +214,32 @@ impl SchemaSerializer {
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 #[pyo3(signature = (value, *, indent = None, ensure_ascii = false, include = None, exclude = None, by_alias = true,
-    exclude_none = false, round_trip = false, timedelta_mode = "iso8601", temporal_mode = "iso8601",
+    exclude_none = false, round_trip = false, timedelta_mode = "iso8601", temporal_mode = None,
     bytes_mode = "utf8",  inf_nan_mode = "constants", serialize_unknown = false, fallback = None,
     serialize_as_any = false, polymorphic_serialization = None, context = None))]
-pub fn to_json(
-    py: Python,
-    value: &Bound<'_, PyAny>,
+pub fn to_json<'py>(
+    py: Python<'py>,
+    value: &Bound<'py, PyAny>,
     indent: Option<usize>,
     ensure_ascii: Option<bool>,
-    include: Option<Bound<'_, PyAny>>,
-    exclude: Option<Bound<'_, PyAny>>,
+    include: Option<Bound<'py, PyAny>>,
+    exclude: Option<Bound<'py, PyAny>>,
     by_alias: bool,
     exclude_none: bool,
     round_trip: bool,
     timedelta_mode: &str,
-    temporal_mode: &str,
+    temporal_mode: Option<Bound<'py, PyAny>>,
     bytes_mode: &str,
     inf_nan_mode: &str,
     serialize_unknown: bool,
-    fallback: Option<Bound<'_, PyAny>>,
+    fallback: Option<Bound<'py, PyAny>>,
     serialize_as_any: bool,
     polymorphic_serialization: Option<bool>,
-    context: Option<Bound<'_, PyAny>>,
+    context: Option<Bound<'py, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let config = SerializationConfig::from_args(timedelta_mode, temporal_mode, bytes_mode, inf_nan_mode)?;
+    let temporal_default = intern!(py, "iso8601").to_owned().into_any();
+    let temporal_mode_value = temporal_mode.unwrap_or(temporal_default);
+    let config = SerializationConfig::from_args(timedelta_mode, &temporal_mode_value, bytes_mode, inf_nan_mode)?;
     let extra = Extra::new(
         py,
         SerMode::Json,
@@ -270,27 +272,29 @@ pub fn to_json(
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 #[pyo3(signature = (value, *, include = None, exclude = None, by_alias = true, exclude_none = false, round_trip = false,
-    timedelta_mode = "iso8601", temporal_mode = "iso8601", bytes_mode = "utf8", inf_nan_mode = "constants",
+    timedelta_mode = "iso8601", temporal_mode = None, bytes_mode = "utf8", inf_nan_mode = "constants",
     serialize_unknown = false, fallback = None, serialize_as_any = false, polymorphic_serialization = None, context = None))]
-pub fn to_jsonable_python(
-    py: Python,
-    value: &Bound<'_, PyAny>,
-    include: Option<Bound<'_, PyAny>>,
-    exclude: Option<Bound<'_, PyAny>>,
+pub fn to_jsonable_python<'py>(
+    py: Python<'py>,
+    value: &Bound<'py, PyAny>,
+    include: Option<Bound<'py, PyAny>>,
+    exclude: Option<Bound<'py, PyAny>>,
     by_alias: bool,
     exclude_none: bool,
     round_trip: bool,
     timedelta_mode: &str,
-    temporal_mode: &str,
+    temporal_mode: Option<Bound<'py, PyAny>>,
     bytes_mode: &str,
     inf_nan_mode: &str,
     serialize_unknown: bool,
-    fallback: Option<Bound<'_, PyAny>>,
+    fallback: Option<Bound<'py, PyAny>>,
     serialize_as_any: bool,
     polymorphic_serialization: Option<bool>,
-    context: Option<Bound<'_, PyAny>>,
+    context: Option<Bound<'py, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let config = SerializationConfig::from_args(timedelta_mode, temporal_mode, bytes_mode, inf_nan_mode)?;
+    let temporal_default = intern!(py, "iso8601").to_owned().into_any();
+    let temporal_mode_value = temporal_mode.unwrap_or(temporal_default);
+    let config = SerializationConfig::from_args(timedelta_mode, &temporal_mode_value, bytes_mode, inf_nan_mode)?;
     let extra = Extra::new(
         py,
         SerMode::Json,

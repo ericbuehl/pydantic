@@ -271,6 +271,7 @@ pub(crate) struct ExtraOwned {
 }
 
 impl_py_gc_traverse!(ExtraOwned {
+    config,
     model,
     fallback,
     context,
@@ -290,7 +291,7 @@ impl ExtraOwned {
             exclude_none: extra.exclude_none,
             exclude_computed_fields: extra.exclude_computed_fields,
             round_trip: extra.round_trip,
-            config: state.config,
+            config: state.config.clone(),
             rec_guard: state.rec_guard.clone(),
             check: state.check,
             model: state.model.as_ref().map(|model| model.clone().into()),
@@ -329,7 +330,7 @@ impl ExtraOwned {
         SerializationState {
             warnings: self.warnings.clone(),
             rec_guard: self.rec_guard.clone(),
-            config: self.config,
+            config: self.config.clone(),
             model: self.model.as_ref().map(|m| m.bind(py).clone()),
             field_name: self.field_name.as_ref().map(|name| name.bind(py).clone()),
             check: self.check,

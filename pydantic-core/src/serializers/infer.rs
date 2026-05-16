@@ -151,20 +151,60 @@ pub(crate) fn infer_to_python_known<'py>(
                 serialize_pairs(dict.iter().map(Ok), state, serialize_to_python(py))?
             }
             ObType::Datetime => {
-                let datetime = state.config.temporal_mode.datetime_to_json(value.py(), value.cast()?)?;
-                datetime.into_py_any(py)?
+                if let Some(ref cb) = state.config.temporal_callback {
+                    let result = cb.call1(py, (value,))?;
+                    if !result.is_none(py) {
+                        result
+                    } else {
+                        let datetime = state.config.temporal_mode.datetime_to_json(py, value.cast()?)?;
+                        datetime.into_py_any(py)?
+                    }
+                } else {
+                    let datetime = state.config.temporal_mode.datetime_to_json(py, value.cast()?)?;
+                    datetime.into_py_any(py)?
+                }
             }
             ObType::Date => {
-                let date = state.config.temporal_mode.date_to_json(value.py(), value.cast()?)?;
-                date.into_py_any(py)?
+                if let Some(ref cb) = state.config.temporal_callback {
+                    let result = cb.call1(py, (value,))?;
+                    if !result.is_none(py) {
+                        result
+                    } else {
+                        let date = state.config.temporal_mode.date_to_json(py, value.cast()?)?;
+                        date.into_py_any(py)?
+                    }
+                } else {
+                    let date = state.config.temporal_mode.date_to_json(py, value.cast()?)?;
+                    date.into_py_any(py)?
+                }
             }
             ObType::Time => {
-                let time = state.config.temporal_mode.time_to_json(value.py(), value.cast()?)?;
-                time.into_py_any(py)?
+                if let Some(ref cb) = state.config.temporal_callback {
+                    let result = cb.call1(py, (value,))?;
+                    if !result.is_none(py) {
+                        result
+                    } else {
+                        let time = state.config.temporal_mode.time_to_json(py, value.cast()?)?;
+                        time.into_py_any(py)?
+                    }
+                } else {
+                    let time = state.config.temporal_mode.time_to_json(py, value.cast()?)?;
+                    time.into_py_any(py)?
+                }
             }
             ObType::Timedelta => {
-                let either_delta = EitherTimedelta::try_from(value)?;
-                state.config.temporal_mode.timedelta_to_json(value.py(), either_delta)?
+                if let Some(ref cb) = state.config.temporal_callback {
+                    let result = cb.call1(py, (value,))?;
+                    if !result.is_none(py) {
+                        result
+                    } else {
+                        let either_delta = EitherTimedelta::try_from(value)?;
+                        state.config.temporal_mode.timedelta_to_json(py, either_delta)?
+                    }
+                } else {
+                    let either_delta = EitherTimedelta::try_from(value)?;
+                    state.config.temporal_mode.timedelta_to_json(py, either_delta)?
+                }
             }
             ObType::Url
             | ObType::MultiHostUrl
@@ -398,18 +438,46 @@ pub(crate) fn infer_serialize_known<'py, S: Serializer>(
         ObType::Set => serialize_seq!(PySet),
         ObType::Frozenset => serialize_seq!(PyFrozenSet),
         ObType::Datetime => {
+            if let Some(ref cb) = state.config.temporal_callback {
+                let result = cb.call1(value.py(), (value,)).map_err(py_err_se_err)?;
+                if !result.is_none(value.py()) {
+                    let bound = result.bind(value.py());
+                    return infer_serialize(bound, serializer, state);
+                }
+            }
             let py_datetime = value.cast().map_err(py_err_se_err)?;
             state.config.temporal_mode.datetime_serialize(py_datetime, serializer)
         }
         ObType::Date => {
+            if let Some(ref cb) = state.config.temporal_callback {
+                let result = cb.call1(value.py(), (value,)).map_err(py_err_se_err)?;
+                if !result.is_none(value.py()) {
+                    let bound = result.bind(value.py());
+                    return infer_serialize(bound, serializer, state);
+                }
+            }
             let py_date = value.cast().map_err(py_err_se_err)?;
             state.config.temporal_mode.date_serialize(py_date, serializer)
         }
         ObType::Time => {
+            if let Some(ref cb) = state.config.temporal_callback {
+                let result = cb.call1(value.py(), (value,)).map_err(py_err_se_err)?;
+                if !result.is_none(value.py()) {
+                    let bound = result.bind(value.py());
+                    return infer_serialize(bound, serializer, state);
+                }
+            }
             let py_time = value.cast().map_err(py_err_se_err)?;
             state.config.temporal_mode.time_serialize(py_time, serializer)
         }
         ObType::Timedelta => {
+            if let Some(ref cb) = state.config.temporal_callback {
+                let result = cb.call1(value.py(), (value,)).map_err(py_err_se_err)?;
+                if !result.is_none(value.py()) {
+                    let bound = result.bind(value.py());
+                    return infer_serialize(bound, serializer, state);
+                }
+            }
             let either_delta = EitherTimedelta::try_from(value).map_err(py_err_se_err)?;
             state.config.temporal_mode.timedelta_serialize(either_delta, serializer)
         }
@@ -528,14 +596,52 @@ pub(crate) fn infer_json_key_known<'a, 'py>(
             })
             .map(|cow| Cow::Owned(cow.into_owned()))
         }
-        ObType::Datetime => state.config.temporal_mode.datetime_json_key(key.cast()?),
-        ObType::Date => state.config.temporal_mode.date_json_key(key.cast()?),
-        ObType::Time => state.config.temporal_mode.time_json_key(key.cast()?),
+        ObType::Datetime => {
+            if let Some(ref cb) = state.config.temporal_callback {
+                let py = key.py();
+                let result = cb.call1(py, (key,))?;
+                if !result.is_none(py) {
+                    let s: String = result.extract(py)?;
+                    return Ok(Cow::Owned(s));
+                }
+            }
+            state.config.temporal_mode.datetime_json_key(key.cast()?)
+        }
+        ObType::Date => {
+            if let Some(ref cb) = state.config.temporal_callback {
+                let py = key.py();
+                let result = cb.call1(py, (key,))?;
+                if !result.is_none(py) {
+                    let s: String = result.extract(py)?;
+                    return Ok(Cow::Owned(s));
+                }
+            }
+            state.config.temporal_mode.date_json_key(key.cast()?)
+        }
+        ObType::Time => {
+            if let Some(ref cb) = state.config.temporal_callback {
+                let py = key.py();
+                let result = cb.call1(py, (key,))?;
+                if !result.is_none(py) {
+                    let s: String = result.extract(py)?;
+                    return Ok(Cow::Owned(s));
+                }
+            }
+            state.config.temporal_mode.time_json_key(key.cast()?)
+        }
         ObType::Uuid => {
             let uuid = super::type_serializers::uuid::uuid_to_string(key)?;
             Ok(Cow::Owned(uuid))
         }
         ObType::Timedelta => {
+            if let Some(ref cb) = state.config.temporal_callback {
+                let py = key.py();
+                let result = cb.call1(py, (key,))?;
+                if !result.is_none(py) {
+                    let s: String = result.extract(py)?;
+                    return Ok(Cow::Owned(s));
+                }
+            }
             let either_delta = EitherTimedelta::try_from(key)?;
             state.config.temporal_mode.timedelta_json_key(&either_delta)
         }
@@ -617,7 +723,7 @@ pub(crate) fn call_pydantic_serializer<'py, S: DoSerialize>(
     state: &mut SerializationState<'py>,
     do_serialize: S,
 ) -> Result<S::Ok, S::Error> {
-    let state = &mut state.scoped_set(|s| &mut s.config, serializer.get().config);
+    let state = &mut state.scoped_set(|s| &mut s.config, serializer.get().config.clone());
 
     // Avoid falling immediately back into inference because we need to use the serializer
     // to drive the next step of serialization

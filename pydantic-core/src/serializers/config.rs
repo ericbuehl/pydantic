@@ -18,18 +18,26 @@ use crate::tools::SchemaDict;
 
 use super::errors::py_err_se_err;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 #[allow(clippy::struct_field_names)]
 pub(crate) struct SerializationConfig {
     pub temporal_mode: TemporalMode,
+    /// Optional Python callable for custom temporal serialization.
+    /// When `Some`, the callable is invoked with the temporal value (datetime, date, time, or timedelta).
+    /// If the callable returns `None`, serialization falls through to `temporal_mode`.
+    /// Set via the `temporal_mode` parameter of `to_json`/`to_jsonable_python` when a callable is passed.
+    pub temporal_callback: Option<Py<PyAny>>,
     pub bytes_mode: BytesMode,
     pub inf_nan_mode: InfNanMode,
 }
+
+impl_py_gc_traverse!(SerializationConfig { temporal_callback });
 
 impl Default for SerializationConfig {
     fn default() -> Self {
         Self {
             temporal_mode: TemporalMode::default(),
+            temporal_callback: None,
             bytes_mode: BytesMode::default(),
             inf_nan_mode: InfNanMode::Constants,
         }
@@ -50,6 +58,7 @@ impl SerializationConfig {
         let inf_nan_mode = InfNanMode::from_config(config)?;
         Ok(Self {
             temporal_mode,
+            temporal_callback: None,
             bytes_mode,
             inf_nan_mode,
         })
@@ -57,17 +66,25 @@ impl SerializationConfig {
 
     pub fn from_args(
         timedelta_mode: &str,
-        temporal_mode: &str,
+        temporal_mode: &Bound<'_, PyAny>,
         bytes_mode: &str,
         inf_nan_mode: &str,
     ) -> PyResult<Self> {
-        let resolved_temporal_mode = if temporal_mode != "iso8601" {
-            TemporalMode::from_str(temporal_mode)?
+        // temporal_mode can be either a string literal or a callable.
+        let (resolved_temporal_mode, temporal_callback) = if temporal_mode.is_callable() {
+            (TemporalMode::default(), Some(temporal_mode.clone().unbind()))
         } else {
-            TimedeltaMode::from_str(timedelta_mode)?.into()
+            let mode_str: &str = temporal_mode.extract()?;
+            let mode = if mode_str != "iso8601" {
+                TemporalMode::from_str(mode_str)?
+            } else {
+                TimedeltaMode::from_str(timedelta_mode)?.into()
+            };
+            (mode, None)
         };
         Ok(Self {
             temporal_mode: resolved_temporal_mode,
+            temporal_callback,
             bytes_mode: BytesMode::from_str(bytes_mode)?,
             inf_nan_mode: InfNanMode::from_str(inf_nan_mode)?,
         })
